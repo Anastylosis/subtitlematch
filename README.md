@@ -1,4 +1,9 @@
-# subs
+# subtitlematch
+
+[![CI](https://github.com/Anastylosis/subtitlematch/actions/workflows/ci.yml/badge.svg)](https://github.com/Anastylosis/subtitlematch/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/Anastylosis/subtitlematch/branch/master/graph/badge.svg)](https://codecov.io/gh/Anastylosis/subtitlematch)
+[![Go Reference](https://pkg.go.dev/badge/github.com/Anastylosis/subtitlematch.svg)](https://pkg.go.dev/github.com/Anastylosis/subtitlematch)
+[![Go Report Card](https://goreportcard.com/badge/github.com/Anastylosis/subtitlematch)](https://goreportcard.com/report/github.com/Anastylosis/subtitlematch)
 
 Matches loose subtitle files to the videos they belong to, when the two names
 share almost nothing.
