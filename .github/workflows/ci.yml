@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: Anastylosis/.github/.github/workflows/go-ci.yml@v1
+    permissions:
+      contents: read
+      checks: write
+    secrets: inherit
+    with:
+      # A library, not a command: there is nothing to install or cross-compile,
+      # so binary-name only satisfies the input and cross-build just proves the
+      # package still compiles for each target.
+      binary-name: subtitlematch
+      main-package: .
+      codecov: false
