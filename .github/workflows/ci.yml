@@ -30,4 +30,3 @@ jobs:
       # package still compiles for each target.
       binary-name: subtitlematch
       main-package: .
-      codecov: false
