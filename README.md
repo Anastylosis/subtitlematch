@@ -55,4 +55,6 @@ consumer share it unchanged.
 
 ## License
 
+Copyright (C) 2026 Wasylq
+
 GPL-3.0-only.
