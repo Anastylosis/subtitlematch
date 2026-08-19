@@ -107,6 +107,27 @@ a subtitle onto the wrong video is worse than leaving it alone. Treating it as
 | `F1(a, b)`, `Overlap(a, b)` | set similarity primitives |
 | `HMS(d)` | duration as `H:MM:SS`, for reports |
 
+## Regression corpus
+
+`corpus_test.go`'s `TestCorpusReplay` replays a match report generated
+against a real library and pins the verdicts to a golden file, so a scoring
+change that quietly reshuffles thousands of real matches shows up as a diff.
+Neither the report nor the golden file is committed — regenerate your own
+from a live library:
+
+```sh
+custodian subs scan --dir <loose subs> --json report.json
+SUBS_CORPUS=report.json go test -run TestCorpusReplay -update ./...
+```
+
+That writes `report.json.golden.json` beside the report. From then on, point
+`SUBS_CORPUS` at `report.json` (no `-update`) to check the ported scorer
+against it. The `.json` extension selects Custodian's `subs scan --json`
+shape, which is the only report format carrying scene dates — an older,
+Markdown-styled human report this replay used to target is still accepted
+(same mechanism, `.md` extension) for corpora already captured in that
+shape, but it predates the date signal entirely and can never exercise it.
+
 ## Who uses it
 
 - **Custodian** matches against a local filesystem, then moves files into place.
