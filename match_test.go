@@ -1,6 +1,7 @@
 package subtitlematch
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -308,5 +309,144 @@ func TestMatch_FolderNamesAreNotTitleEvidence(t *testing.T) {
 	}, 5)
 	if b := m.Best(); b != nil && b.NameSim > 0 {
 		t.Errorf("folder words leaked into title similarity: %.2f (%v)", b.NameSim, b.Reasons)
+	}
+}
+
+// dateReason returns the candidate's date-related reason, if any. Exactly one
+// reason string is expected to start with "date" — this pins that invariant
+// while reading the reason out.
+func dateReason(t *testing.T, c *Candidate) string {
+	t.Helper()
+	var found string
+	for _, r := range c.Reasons {
+		if strings.HasPrefix(r, "date") {
+			if found != "" {
+				t.Fatalf("more than one date reason: %q and %q", found, r)
+			}
+			found = r
+		}
+	}
+	return found
+}
+
+// The date rule itself: agreement within 2 days scores +25, a wider gap
+// scores -40, and anything unparseable or missing on either side is neutral
+// rather than penalised — garbage input must never count against a
+// candidate. See docs/design.md.
+func TestMatch_DateSignal(t *testing.T) {
+	newIndex := func(sceneDate string) *Index {
+		ix := NewIndex([]SceneRef{
+			scene("1", "some-stem", "Some Unique Title Words", mins(20, 0)),
+		}, testVocab())
+		ix.scenes[0].Date = sceneDate
+		return ix
+	}
+
+	// Baseline: no date evidence on either side.
+	base := newIndex("")
+	baseBest := base.Match(Subtitle{Stem: "Some Unique Title Words", Runtime: mins(20, 0)}, 5).Best()
+	if baseBest == nil {
+		t.Fatal("no baseline candidate")
+	}
+	if r := dateReason(t, baseBest); r != "" {
+		t.Fatalf("baseline carries a date reason: %q", r)
+	}
+	baseScore := baseBest.Score
+
+	for _, tc := range []struct {
+		name       string
+		subDate    string
+		sceneDate  string
+		wantReason string
+		wantDelta  float64
+	}{
+		{"exact match", "2024-05-10", "2024-05-10", "date 2024-05-10", 25},
+		{"1 day skew tolerated", "2024-05-11", "2024-05-10", "date 2024-05-11", 25},
+		{"2 day skew tolerated", "2024-05-12", "2024-05-10", "date 2024-05-12", 25},
+		{"3 day skew is a mismatch", "2024-05-13", "2024-05-10", "date mismatch 2024-05-13 vs 2024-05-10", -40},
+		{"scene has no date", "2024-05-10", "", "", 0},
+		{"subtitle has no date", "", "2024-05-10", "", 0},
+		{"scene date unparseable is treated as absent", "2024-05-10", "not-a-date", "", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ix := newIndex(tc.sceneDate)
+			m := ix.Match(Subtitle{
+				Stem:    "Some Unique Title Words",
+				Runtime: mins(20, 0),
+				Date:    tc.subDate,
+			}, 5)
+			best := m.Best()
+			if best == nil {
+				t.Fatal("no candidate")
+			}
+			if r := dateReason(t, best); r != tc.wantReason {
+				t.Errorf("reason = %q, want %q", r, tc.wantReason)
+			}
+			if delta := best.Score - baseScore; delta != tc.wantDelta {
+				t.Errorf("score delta = %v, want %v (score=%v base=%v)", delta, tc.wantDelta, best.Score, baseScore)
+			}
+		})
+	}
+}
+
+// Same title, same runtime, two candidates differing only by date: the one
+// agreeing with the caller's date must win decisively rather than leaving the
+// pair Ambiguous, which is the whole point of asking for a date at all.
+func TestMatch_DateSeparatesTiedCandidates(t *testing.T) {
+	ix := NewIndex([]SceneRef{
+		{ID: "1", Stem: "scene-file-001", Title: "Two Sisters Share The Prize",
+			Path: "/data/x/1.mp4", Duration: mins(20, 0), Date: "2024-03-10"},
+		{ID: "2", Stem: "scene-file-002", Title: "Two Sisters Share The Prize",
+			Path: "/data/x/2.mp4", Duration: mins(20, 2), Date: "2024-06-01"},
+	}, testVocab())
+
+	m := ix.Match(Subtitle{
+		Stem:    "Two Sisters Share The Prize",
+		Runtime: mins(20, 1),
+		Date:    "2024-03-10",
+	}, 5)
+
+	best := m.Best()
+	if best == nil || best.Scene.ID != "1" {
+		t.Fatalf("best = %+v, want scene 1 (matches the caller's date)", best)
+	}
+	if len(m.Candidates) < 2 {
+		t.Fatalf("want both candidates scored, got %+v", m.Candidates)
+	}
+	if gap := m.Candidates[0].Score - m.Candidates[1].Score; gap < 40 {
+		t.Errorf("gap = %v, want >= 40 (candidates %+v)", gap, m.Candidates)
+	}
+	if m.Verdict == Ambiguous {
+		t.Errorf("verdict = %s, want a decisive verdict once the date breaks the tie", m.Verdict)
+	}
+}
+
+// A date mismatch is real evidence against a pairing, not disqualifying
+// evidence: it must cap an otherwise-Confirmed verdict at Likely rather than
+// silently overriding a hard identification like an exact filename match.
+func TestMatch_DateMismatchCapsAtLikely(t *testing.T) {
+	ix := NewIndex([]SceneRef{
+		{ID: "1", Stem: "exact-match-stem", Title: "Some Title",
+			Path: "/data/x/1.mp4", Duration: mins(15, 0), Date: "2024-01-01"},
+	}, testVocab())
+
+	m := ix.Match(Subtitle{
+		Stem:    "exact-match-stem",
+		Runtime: mins(15, 1),
+		Date:    "2025-01-01",
+	}, 5)
+
+	best := m.Best()
+	if best == nil {
+		t.Fatal("no candidate")
+	}
+	if !hasReason(*best, "date mismatch") {
+		t.Fatalf("reasons = %v, want a date mismatch", best.Reasons)
+	}
+	if !hasReason(*best, "filename match") {
+		t.Fatalf("reasons = %v, want the exact filename match that would otherwise confirm", best.Reasons)
+	}
+	if m.Verdict != Likely {
+		t.Errorf("verdict = %s, want LIKELY (a date mismatch must cap an otherwise-Confirmed verdict)", m.Verdict)
 	}
 }

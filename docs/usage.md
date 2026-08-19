@@ -49,16 +49,26 @@ sub := subs.Subtitle{
     Lang:    lang,
     Size:    size,                  // breaks ties between duplicate transcripts
     Dirs:    dirs,                  // folders between scan root and file
+    Date:    date,                  // YYYY-MM-DD, optional
 }
 ```
 
-Two fields carry more weight than they look:
+Three fields carry more weight than they look:
 
 - **`Runtime`** is the decisive signal. Populate it via `subs.Runtime(r)`, which
   reads the last cue time from an SRT/VTT stream.
 - **`Dirs`** contributes creator evidence only. People file subtitles under a
   performer or studio folder, which names the creator even when the filename
   does not.
+- **`Date`** is a second discriminator alongside runtime: same title, same
+  performers and a runtime within seconds recur across a studio's catalog, and
+  the scene date is what tells those apart. Set it when you have one from
+  metadata — a media manager, a fingerprint database. When empty, the matcher
+  falls back to a YYYY-MM-DD parsed out of `Stem`, which only ever fires for
+  the one dated-filename convention this package was originally built against;
+  most libraries carry no date in their filenames at all, so callers with a
+  metadata date should set the field rather than lean on that fallback. See
+  [design.md](design.md) for the tolerance and the verdict cap on disagreement.
 
 ## Matching
 

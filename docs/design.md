@@ -30,7 +30,7 @@ strong-looking name match:
 | exact stem match | +100 — already named after the video |
 | title similarity | +0…70 (token F1) |
 | runtime agreement | +0…45; a contradiction subtracts 30 |
-| matching date | +25 |
+| matching date (±2 days) | +25; a wider disagreement subtracts 40 |
 
 ## Runtime is the decisive signal
 
@@ -43,6 +43,32 @@ separates those; runtime does it immediately.
 The whole stream is scanned rather than just the tail, because cues are not
 always stored chronologically and a trailing credit line can carry a timestamp
 earlier than the true end.
+
+## Date is a discriminator, not just a bonus
+
+Studios title lazily: the same title, the same performers and a duration
+within seconds of each other recur across a catalog, so name and runtime
+agreement alone will eventually produce a false positive at scale. The scene
+date is what breaks that tie when it is available.
+
+`Subtitle.Date` (YYYY-MM-DD) is optional. Most libraries carry no date in
+their filenames at all — `subDate(sub.Stem)` only ever fires for one dated
+naming convention — so a caller with a date from anywhere else (a media
+manager, a fingerprint database) should set the field explicitly rather than
+rely on the filename fallback.
+
+Agreement within **2 days** scores the same +25 as before; anything wider
+scores **−40**, enough to outrank a runtime coincidence (+45 max) but not a
+hard identification (a code at +60 or an exact filename at +100). The
+tolerance exists because scrapers and studios routinely disagree by a day or
+two on release date versus publish date — that is noise, not evidence.
+
+A date disagreement is real evidence against a pairing, but not proof against
+one: `decide()` caps a candidate carrying a date mismatch at `Likely`, never
+`Confirmed`, even when every other signal (including an exact filename) would
+otherwise confirm it outright. An unparseable or missing date on either side
+is treated as absent, never as a mismatch — garbage input must not penalise a
+candidate that simply lacks the evidence.
 
 ## Title and filename are scored separately
 

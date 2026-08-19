@@ -65,6 +65,11 @@ type Subtitle struct {
 	// a creator when the filename does not, and count as creator evidence
 	// only.
 	Dirs []string
+	// Date is a YYYY-MM-DD scene date, optional. Set it when the caller has
+	// one from metadata (a media manager, a fingerprint DB); when empty the
+	// matcher falls back to subDate(Stem), which only fires for libraries
+	// that put dates in filenames — rare. See docs/design.md.
+	Date string
 }
 
 // Candidate is one scored possibility for a subtitle.
@@ -156,7 +161,7 @@ func (ix *Index) Len() int { return len(ix.scenes) }
 //	exact stem match   +100  (the subtitle is already named after the video)
 //	title similarity   +0..70 (token F1)
 //	runtime agreement  +0..45, and a contradiction subtracts 30
-//	matching date      +25
+//	matching date (±2d) +25, and a disagreement beyond that subtracts 40
 func (ix *Index) Match(sub Subtitle, maxCandidates int) Match {
 	if maxCandidates <= 0 {
 		maxCandidates = 5
@@ -172,6 +177,14 @@ func (ix *Index) Match(sub Subtitle, maxCandidates int) Match {
 	}
 	subCodes := Codes(sub.Stem)
 	subStemNorm := normKey(sub.Stem)
+	// Metadata wins over the filename guess: most libraries have no date in
+	// their filenames at all, so a caller-supplied date is the common case
+	// this exists for.
+	queryDate := sub.Date
+	if queryDate == "" {
+		queryDate = subDate(sub.Stem)
+	}
+	subDateT, subDateOK := parseDate(queryDate)
 
 	scores := map[int]*Candidate{}
 	get := func(i int) *Candidate {
@@ -256,9 +269,25 @@ func (ix *Index) Match(sub Subtitle, maxCandidates int) Match {
 				c.Reasons = append(c.Reasons, "runtime mismatch "+signedSeconds(delta))
 			}
 		}
-		if d := subDate(sub.Stem); d != "" && d == sc.Date {
-			c.Score += 25
-			c.Reasons = append(c.Reasons, "date "+d)
+		// An unparseable date on either side is treated as absent, never as a
+		// mismatch: garbage input must not penalise a candidate.
+		if sceneDateT, ok := parseDate(sc.Date); subDateOK && ok {
+			delta := sceneDateT.Sub(subDateT)
+			if delta < 0 {
+				delta = -delta
+			}
+			if delta <= 2*24*time.Hour {
+				// Scrapers and studios disagree on release vs. publish day,
+				// so a day or two of skew is tolerated rather than treated
+				// as evidence against the pairing.
+				c.Score += 25
+				c.Reasons = append(c.Reasons, "date "+queryDate)
+			} else {
+				// Enough to outrank a runtime coincidence (+45 max) but not
+				// a code or exact-filename hard ID (+60/+100).
+				c.Score -= 40
+				c.Reasons = append(c.Reasons, "date mismatch "+queryDate+" vs "+sc.Date)
+			}
 		}
 	}
 
@@ -316,22 +345,31 @@ func decide(sub Subtitle, ranked []Candidate) Verdict {
 	hardID := hasReason(top, "code") || hasReason(top, "filename match")
 	nameAgrees := top.NameSim >= 0.5
 
-	switch {
-	case runtimeContradicts && !hasReason(top, "filename match"):
-		return Ambiguous
-	case hasReason(top, "filename match") && !runtimeContradicts:
-		return Confirmed
-	case top.Score >= 90 && gap >= 20 && (hardID || nameAgrees):
-		return Confirmed
-	case runtimeAgrees && top.Score >= 60 && gap >= 15 && (hardID || nameAgrees):
-		return Confirmed
-	case top.Score >= 45 && gap >= 15:
-		return Likely
-	case gap < 15:
-		return Ambiguous
-	default:
+	verdict := func() Verdict {
+		switch {
+		case runtimeContradicts && !hasReason(top, "filename match"):
+			return Ambiguous
+		case hasReason(top, "filename match") && !runtimeContradicts:
+			return Confirmed
+		case top.Score >= 90 && gap >= 20 && (hardID || nameAgrees):
+			return Confirmed
+		case runtimeAgrees && top.Score >= 60 && gap >= 15 && (hardID || nameAgrees):
+			return Confirmed
+		case top.Score >= 45 && gap >= 15:
+			return Likely
+		case gap < 15:
+			return Ambiguous
+		default:
+			return Likely
+		}
+	}()
+	// A candidate that outright disagrees on date has an unresolved
+	// contradiction with the caller's own evidence, so it can be trusted
+	// enough to act on but never enough to skip review outright.
+	if verdict == Confirmed && hasReason(top, "date mismatch") {
 		return Likely
 	}
+	return verdict
 }
 
 func hasReason(c Candidate, want string) bool {

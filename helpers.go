@@ -21,6 +21,20 @@ func subDate(stem string) string {
 	return m[1] + "-" + m[2] + "-" + m[3]
 }
 
+// parseDate parses a strict YYYY-MM-DD date. ok is false for empty or
+// malformed input, which callers must treat as "no evidence" rather than as
+// a mismatch — a scraper's junk string must never count against a candidate.
+func parseDate(s string) (t time.Time, ok bool) {
+	if s == "" {
+		return time.Time{}, false
+	}
+	t, err := time.Parse("2006-01-02", s)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
+}
+
 // normKey reduces a stem to letters and digits for equality comparison, so
 // "Mommy's Taboo Secret" and "Mommys Taboo Secret [1080p]" collapse together.
 func normKey(s string) string {
